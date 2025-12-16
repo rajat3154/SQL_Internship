@@ -14,7 +14,7 @@ import os
 import io
 import csv
 import json
-
+from sqlalchemy.pool import NullPool
 load_dotenv()
 
 app = FastAPI(title="Social Media Analytics API", 
@@ -40,7 +40,21 @@ app.add_middleware(
 )
 
 DATABASE_URL = os.getenv("DATABASE_URL")
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+engine = create_engine(
+    DATABASE_URL,
+    # Use NullPool for Supabase to avoid connection limits
+    poolclass=NullPool,  # This is crucial for Supabase
+    # Or use very small pool if you must use pooling
+    # pool_size=1,
+    # max_overflow=0,
+    pool_pre_ping=False,  # Disable for Supabase
+    connect_args={
+        "connect_timeout": 10,
+        "application_name": "social_media_analytics",
+        "options": "-c statement_timeout=30000"  # 30 second timeout
+    }
+)
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def get_db():
