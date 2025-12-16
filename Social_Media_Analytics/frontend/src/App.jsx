@@ -1,7 +1,9 @@
+// App.jsx
 import React, { useState, useEffect } from "react";
 import axios from "axios";
+import "./App.css";
 
-const API_URL = import.meta.env.VITE_BACKEND_URL;
+const API_URL = "http://localhost:8000";
 
 function App() {
   const [activeTab, setActiveTab] = useState("analytics");
@@ -19,7 +21,7 @@ function App() {
     email: "",
     full_name: "",
   });
-  const [newPost, setNewPost] = useState({ user_id: "", content: "" });
+  const [newPost, setNewPost] = useState({ user_id: "", content: "", media_urls: [] });
   const [newLike, setNewLike] = useState({ post_id: "", user_id: "" });
   const [newComment, setNewComment] = useState({
     post_id: "",
@@ -30,6 +32,7 @@ function App() {
 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [mediaUrl, setMediaUrl] = useState("");
 
   // Fetch data based on active tab
   useEffect(() => {
@@ -125,7 +128,7 @@ function App() {
       setNewUser({ username: "", email: "", full_name: "" });
       fetchUsers();
     } catch (err) {
-      setMessage("Error creating user");
+      setMessage(err.response?.data?.detail || "Error creating user");
     } finally {
       setLoading(false);
     }
@@ -133,26 +136,44 @@ function App() {
 
   const createPost = async () => {
     if (!newPost.user_id || !newPost.content) {
-      setMessage("Please fill all fields");
+      setMessage("Please select user and enter content");
       return;
     }
     setLoading(true);
     try {
       await axios.post(`${API_URL}/posts/`, newPost);
       setMessage("Post created successfully!");
-      setNewPost({ user_id: "", content: "" });
+      setNewPost({ user_id: "", content: "", media_urls: [] });
+      setMediaUrl("");
       fetchPosts();
       fetchAnalytics();
     } catch (err) {
-      setMessage("Error creating post");
+      setMessage(err.response?.data?.detail || "Error creating post");
     } finally {
       setLoading(false);
     }
   };
 
+  const addMediaUrl = () => {
+    if (mediaUrl.trim()) {
+      setNewPost(prev => ({
+        ...prev,
+        media_urls: [...prev.media_urls, mediaUrl.trim()]
+      }));
+      setMediaUrl("");
+    }
+  };
+
+  const removeMediaUrl = (index) => {
+    setNewPost(prev => ({
+      ...prev,
+      media_urls: prev.media_urls.filter((_, i) => i !== index)
+    }));
+  };
+
   const addLike = async () => {
     if (!newLike.post_id || !newLike.user_id) {
-      setMessage("Please fill all fields");
+      setMessage("Please select both user and post");
       return;
     }
     try {
@@ -160,8 +181,9 @@ function App() {
       setMessage("Like added successfully!");
       setNewLike({ post_id: "", user_id: "" });
       fetchAnalytics();
+      fetchPosts();
     } catch (err) {
-      setMessage("Error adding like");
+      setMessage(err.response?.data?.detail || "Error adding like");
     }
   };
 
@@ -176,7 +198,7 @@ function App() {
       setNewComment({ post_id: "", user_id: "", content: "" });
       fetchAnalytics();
     } catch (err) {
-      setMessage("Error adding comment");
+      setMessage(err.response?.data?.detail || "Error adding comment");
     }
   };
 
@@ -201,6 +223,7 @@ function App() {
       await axios.post(`${API_URL}/analytics/refresh-materialized`);
       setMessage("Views refreshed successfully!");
       fetchAnalytics();
+      fetchPosts();
     } catch (err) {
       setMessage("Error refreshing views");
     }
@@ -236,8 +259,27 @@ function App() {
     }
   };
 
+  const removeLikeAction = async (postId, userId) => {
+    try {
+      await axios.delete(`${API_URL}/likes/?post_id=${postId}&user_id=${userId}`);
+      setMessage("Like removed successfully!");
+      fetchPosts();
+      fetchAnalytics();
+    } catch (err) {
+      setMessage("Error removing like");
+    }
+  };
+
+  const formatDate = (dateString) => {
+    return new Date(dateString).toLocaleString();
+  };
+
+  const formatNumber = (num) => {
+    return num ? parseFloat(num).toFixed(2) : "0.00";
+  };
+
   return (
-    <div className="min-h-screen bg-black">
+    <div className="min-h-screen bg-black text-white">
       {/* Header */}
       <div className="container mx-auto px-4 py-8">
         <div className="text-center mb-8">
@@ -245,20 +287,20 @@ function App() {
             📊 Social Media Analytics Dashboard
           </h1>
           <p className="text-blue-300 text-lg">
-            Complete CRUD operations with advanced SQL features
+            Complete CRUD operations with advanced PostgreSQL features
           </p>
         </div>
 
         {/* Navigation Tabs */}
         <div className="bg-gray-950 rounded-xl p-2 mb-8 border border-blue-500/20">
-          <div className="flex space-x-2">
+          <div className="flex flex-wrap gap-2">
             {["analytics", "users", "posts", "search", "actions"].map((tab) => (
               <button
                 key={tab}
-                className={`flex-1 py-3 px-6 rounded-lg font-semibold transition-all duration-200 ${
+                className={`flex-1 min-w-[120px] py-3 px-4 rounded-lg font-semibold transition-all duration-200 ${
                   activeTab === tab
                     ? "bg-blue-600 text-white shadow-lg shadow-blue-500/25"
-                    : "text-gray-300 hover:bg-black hover:text-white"
+                    : "text-gray-300 hover:bg-gray-700 hover:text-white"
                 }`}
                 onClick={() => setActiveTab(tab)}
               >
@@ -278,6 +320,12 @@ function App() {
             }`}
           >
             {message}
+            <button 
+              onClick={() => setMessage("")}
+              className="float-right text-sm"
+            >
+              ✕
+            </button>
           </div>
         )}
 
@@ -303,7 +351,7 @@ function App() {
                       Total Posts
                     </div>
                     <div className="text-3xl font-bold text-white">
-                      {engagementStats.overall_stats.total_posts}
+                      {engagementStats.overall_stats.total_posts || 0}
                     </div>
                   </div>
                   <div className="bg-gray-950 border border-blue-500/20 rounded-xl p-6 text-center shadow-lg">
@@ -311,7 +359,7 @@ function App() {
                       Total Likes
                     </div>
                     <div className="text-3xl font-bold text-white">
-                      {engagementStats.overall_stats.total_likes}
+                      {engagementStats.overall_stats.total_likes || 0}
                     </div>
                   </div>
                   <div className="bg-gray-950 border border-blue-500/20 rounded-xl p-6 text-center shadow-lg">
@@ -319,7 +367,7 @@ function App() {
                       Total Comments
                     </div>
                     <div className="text-3xl font-bold text-white">
-                      {engagementStats.overall_stats.total_comments}
+                      {engagementStats.overall_stats.total_comments || 0}
                     </div>
                   </div>
                   <div className="bg-gray-950 border border-blue-500/20 rounded-xl p-6 text-center shadow-lg">
@@ -327,7 +375,7 @@ function App() {
                       Avg Engagement
                     </div>
                     <div className="text-3xl font-bold text-white">
-                      {engagementStats.overall_stats.avg_engagement?.toFixed(2)}
+                      {formatNumber(engagementStats.overall_stats.avg_engagement)}
                     </div>
                   </div>
                 </>
@@ -366,10 +414,10 @@ function App() {
                       {topPosts.map((post) => (
                         <tr
                           key={post.post_id}
-                          className="border-b border-gray-700/50 hover:bg-black/30"
+                          className="border-b border-gray-700/50 hover:bg-gray-700/30"
                         >
                           <td className="py-3 px-4 text-white font-semibold">
-                            {post.rank}
+                            {post.engagement_rank}
                           </td>
                           <td className="py-3 px-4 text-gray-300">
                             {post.username}
@@ -381,7 +429,7 @@ function App() {
                             {post.like_count}
                           </td>
                           <td className="py-3 px-4 text-blue-400 font-semibold">
-                            {post.engagement_score?.toFixed(2)}
+                            {formatNumber(post.engagement_score)}
                           </td>
                         </tr>
                       ))}
@@ -400,6 +448,9 @@ function App() {
                     <thead>
                       <tr className="border-b border-gray-700">
                         <th className="text-left py-3 px-4 text-blue-400 font-semibold">
+                          Rank
+                        </th>
+                        <th className="text-left py-3 px-4 text-blue-400 font-semibold">
                           Username
                         </th>
                         <th className="text-left py-3 px-4 text-blue-400 font-semibold">
@@ -409,7 +460,7 @@ function App() {
                           Likes Received
                         </th>
                         <th className="text-left py-3 px-4 text-blue-400 font-semibold">
-                          Comments Received
+                          Avg Engagement
                         </th>
                       </tr>
                     </thead>
@@ -417,9 +468,12 @@ function App() {
                       {userSummary.map((user) => (
                         <tr
                           key={user.user_id}
-                          className="border-b border-gray-700/50 hover:bg-black/30"
+                          className="border-b border-gray-700/50 hover:bg-gray-700/30"
                         >
                           <td className="py-3 px-4 text-white font-semibold">
+                            {user.user_rank}
+                          </td>
+                          <td className="py-3 px-4 text-gray-300">
                             {user.username}
                           </td>
                           <td className="py-3 px-4 text-gray-300">
@@ -428,8 +482,8 @@ function App() {
                           <td className="py-3 px-4 text-gray-300">
                             {user.total_likes_received}
                           </td>
-                          <td className="py-3 px-4 text-gray-300">
-                            {user.total_comments_received}
+                          <td className="py-3 px-4 text-blue-400">
+                            {formatNumber(user.avg_engagement_score)}
                           </td>
                         </tr>
                       ))}
@@ -457,7 +511,7 @@ function App() {
                   onChange={(e) =>
                     setNewUser({ ...newUser, username: e.target.value })
                   }
-                  className="bg-black border border-gray-600 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
+                  className="bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
                 />
                 <input
                   type="email"
@@ -466,7 +520,7 @@ function App() {
                   onChange={(e) =>
                     setNewUser({ ...newUser, email: e.target.value })
                   }
-                  className="bg-black border border-gray-600 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
+                  className="bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
                 />
                 <input
                   type="text"
@@ -475,7 +529,7 @@ function App() {
                   onChange={(e) =>
                     setNewUser({ ...newUser, full_name: e.target.value })
                   }
-                  className="bg-black border border-gray-600 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
+                  className="bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
                 />
                 <button
                   onClick={createUser}
@@ -488,14 +542,14 @@ function App() {
 
             {/* Users Table */}
             <div className="bg-gray-950 border border-blue-500/20 rounded-xl p-6 shadow-lg">
-              <h2 className="text-xl font-bold text-white mb-4">All Users</h2>
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-bold text-white">All Users</h2>
+                <span className="text-gray-400">{users.length} users</span>
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-gray-700">
-                      <th className="text-left py-3 px-4 text-blue-400 font-semibold">
-                        ID
-                      </th>
                       <th className="text-left py-3 px-4 text-blue-400 font-semibold">
                         Username
                       </th>
@@ -516,14 +570,11 @@ function App() {
                   <tbody>
                     {users.map((user) => (
                       <tr
-                        key={user.id}
-                        className="border-b border-gray-700/50 hover:bg-black/30"
+                        key={user.user_id}
+                        className="border-b border-gray-700/50 hover:bg-gray-700/30"
                       >
                         <td className="py-3 px-4 text-white font-semibold">
-                          {user.id}
-                        </td>
-                        <td className="py-3 px-4 text-gray-300">
-                          {user.username}
+                          @{user.username}
                         </td>
                         <td className="py-3 px-4 text-gray-300">
                           {user.email}
@@ -532,11 +583,11 @@ function App() {
                           {user.full_name}
                         </td>
                         <td className="py-3 px-4 text-gray-400 text-sm">
-                          {new Date(user.created_at).toLocaleDateString()}
+                          {formatDate(user.created_at)}
                         </td>
                         <td className="py-3 px-4">
                           <button
-                            onClick={() => deleteUser(user.id)}
+                            onClick={() => deleteUser(user.user_id)}
                             className="bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded px-3 py-1 transition-colors"
                           >
                             Delete
@@ -567,18 +618,18 @@ function App() {
                     onChange={(e) =>
                       setNewPost({ ...newPost, user_id: e.target.value })
                     }
-                    className="w-full bg-black border border-gray-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500"
+                    className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500"
                   >
-                    <option value="" className="bg-black">
+                    <option value="" className="bg-gray-900">
                       Select User
                     </option>
                     {users.map((user) => (
                       <option
-                        key={user.id}
-                        value={user.id}
-                        className="bg-black"
+                        key={user.user_id}
+                        value={user.user_id}
+                        className="bg-gray-900"
                       >
-                        {user.username}
+                        @{user.username}
                       </option>
                     ))}
                   </select>
@@ -589,8 +640,45 @@ function App() {
                       setNewPost({ ...newPost, content: e.target.value })
                     }
                     rows="3"
-                    className="w-full bg-black border border-gray-600 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
+                    className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
                   />
+                  
+                  {/* Media URLs */}
+                  <div className="space-y-2">
+                    <div className="flex gap-2">
+                      <input
+                        type="url"
+                        placeholder="Media URL (optional)"
+                        value={mediaUrl}
+                        onChange={(e) => setMediaUrl(e.target.value)}
+                        className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={addMediaUrl}
+                        className="bg-green-600 hover:bg-green-700 text-white px-3 rounded-lg"
+                      >
+                        Add
+                      </button>
+                    </div>
+                    {newPost.media_urls.length > 0 && (
+                      <div className="space-y-1">
+                        <p className="text-sm text-gray-400">Media URLs:</p>
+                        {newPost.media_urls.map((url, index) => (
+                          <div key={index} className="flex items-center gap-2">
+                            <span className="text-xs truncate flex-1">{url}</span>
+                            <button
+                              onClick={() => removeMediaUrl(index)}
+                              className="text-red-400 hover:text-red-300 text-sm"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  
                   <button
                     onClick={createPost}
                     className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg px-6 py-3 transition-colors"
@@ -609,18 +697,18 @@ function App() {
                     onChange={(e) =>
                       setNewLike({ ...newLike, user_id: e.target.value })
                     }
-                    className="w-full bg-black border border-gray-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500"
+                    className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500"
                   >
-                    <option value="" className="bg-black">
+                    <option value="" className="bg-gray-900">
                       Select User
                     </option>
                     {users.map((user) => (
                       <option
-                        key={user.id}
-                        value={user.id}
-                        className="bg-black"
+                        key={user.user_id}
+                        value={user.user_id}
+                        className="bg-gray-900"
                       >
-                        {user.username}
+                        @{user.username}
                       </option>
                     ))}
                   </select>
@@ -629,18 +717,18 @@ function App() {
                     onChange={(e) =>
                       setNewLike({ ...newLike, post_id: e.target.value })
                     }
-                    className="w-full bg-black border border-gray-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500"
+                    className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500"
                   >
-                    <option value="" className="bg-black">
+                    <option value="" className="bg-gray-900">
                       Select Post
                     </option>
                     {posts.map((post) => (
                       <option
-                        key={post.id}
-                        value={post.id}
-                        className="bg-black"
+                        key={post.post_id}
+                        value={post.post_id}
+                        className="bg-gray-900"
                       >
-                        Post #{post.id} by User #{post.user_id}
+                        @{post.username}: {post.content.substring(0, 50)}...
                       </option>
                     ))}
                   </select>
@@ -648,7 +736,7 @@ function App() {
                     onClick={addLike}
                     className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg px-6 py-3 transition-colors"
                   >
-                    Add Like
+                    ❤️ Add Like
                   </button>
                 </div>
               </div>
@@ -664,18 +752,18 @@ function App() {
                     onChange={(e) =>
                       setNewComment({ ...newComment, user_id: e.target.value })
                     }
-                    className="w-full bg-black border border-gray-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500"
+                    className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500"
                   >
-                    <option value="" className="bg-black">
+                    <option value="" className="bg-gray-900">
                       Select User
                     </option>
                     {users.map((user) => (
                       <option
-                        key={user.id}
-                        value={user.id}
-                        className="bg-black"
+                        key={user.user_id}
+                        value={user.user_id}
+                        className="bg-gray-900"
                       >
-                        {user.username}
+                        @{user.username}
                       </option>
                     ))}
                   </select>
@@ -684,18 +772,18 @@ function App() {
                     onChange={(e) =>
                       setNewComment({ ...newComment, post_id: e.target.value })
                     }
-                    className="w-full bg-black border border-gray-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500"
+                    className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-blue-500"
                   >
-                    <option value="" className="bg-black">
+                    <option value="" className="bg-gray-900">
                       Select Post
                     </option>
                     {posts.map((post) => (
                       <option
-                        key={post.id}
-                        value={post.id}
-                        className="bg-black"
+                        key={post.post_id}
+                        value={post.post_id}
+                        className="bg-gray-900"
                       >
-                        Post #{post.id} by User #{post.user_id}
+                        @{post.username}: {post.content.substring(0, 50)}...
                       </option>
                     ))}
                   </select>
@@ -706,13 +794,13 @@ function App() {
                       setNewComment({ ...newComment, content: e.target.value })
                     }
                     rows="2"
-                    className="w-full bg-black border border-gray-600 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
+                    className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
                   />
                   <button
                     onClick={addComment}
                     className="w-full bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg px-6 py-3 transition-colors"
                   >
-                    Add Comment
+                    💬 Add Comment
                   </button>
                 </div>
               </div>
@@ -720,16 +808,16 @@ function App() {
 
             {/* Posts Table */}
             <div className="bg-gray-950 border border-blue-500/20 rounded-xl p-6 shadow-lg">
-              <h2 className="text-xl font-bold text-white mb-4">All Posts</h2>
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-bold text-white">All Posts</h2>
+                <span className="text-gray-400">{posts.length} posts</span>
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-gray-700">
                       <th className="text-left py-3 px-4 text-blue-400 font-semibold">
-                        ID
-                      </th>
-                      <th className="text-left py-3 px-4 text-blue-400 font-semibold">
-                        User ID
+                        Username
                       </th>
                       <th className="text-left py-3 px-4 text-blue-400 font-semibold">
                         Content
@@ -743,31 +831,52 @@ function App() {
                       <th className="text-left py-3 px-4 text-blue-400 font-semibold">
                         Engagement
                       </th>
+                      <th className="text-left py-3 px-4 text-blue-400 font-semibold">
+                        Actions
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
                     {posts.map((post) => (
                       <tr
-                        key={post.id}
-                        className="border-b border-gray-700/50 hover:bg-black/30"
+                        key={post.post_id}
+                        className="border-b border-gray-700/50 hover:bg-gray-700/30"
                       >
                         <td className="py-3 px-4 text-white font-semibold">
-                          {post.id}
-                        </td>
-                        <td className="py-3 px-4 text-gray-300">
-                          {post.user_id}
+                          @{post.username}
                         </td>
                         <td className="py-3 px-4 text-gray-300 max-w-md">
                           {post.content}
                         </td>
                         <td className="py-3 px-4 text-green-400">
                           {post.like_count}
+                          <button
+                            onClick={() => removeLikeAction(post.post_id, users[0]?.user_id)}
+                            className="ml-2 text-red-400 hover:text-red-300 text-sm"
+                            title="Remove like"
+                          >
+                            ✕
+                          </button>
                         </td>
                         <td className="py-3 px-4 text-blue-400">
                           {post.comment_count}
                         </td>
                         <td className="py-3 px-4 text-yellow-400 font-semibold">
-                          {post.engagement_score?.toFixed(2)}
+                          {formatNumber(post.engagement_score)}
+                        </td>
+                        <td className="py-3 px-4">
+                          <button
+                            onClick={() => {
+                              setNewLike({
+                                post_id: post.post_id,
+                                user_id: users[0]?.user_id || ""
+                              });
+                              addLike();
+                            }}
+                            className="bg-pink-600 hover:bg-pink-700 text-white text-sm font-semibold rounded px-3 py-1 transition-colors mr-2"
+                          >
+                            Like
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -792,7 +901,7 @@ function App() {
                   placeholder="Search post content..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="flex-1 bg-black border border-gray-600 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
+                  className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500"
                 />
                 <button
                   onClick={searchPosts}
@@ -824,8 +933,8 @@ function App() {
                     <tbody>
                       {searchResults.map((post) => (
                         <tr
-                          key={post.id}
-                          className="border-b border-gray-700/50 hover:bg-black/30"
+                          key={post.post_id}
+                          className="border-b border-gray-700/50 hover:bg-gray-700/30"
                         >
                           <td className="py-3 px-4 text-white font-semibold">
                             {post.username}
@@ -837,7 +946,7 @@ function App() {
                             {post.like_count}
                           </td>
                           <td className="py-3 px-4 text-yellow-400">
-                            {post.engagement_score?.toFixed(2)}
+                            {formatNumber(post.engagement_score)}
                           </td>
                         </tr>
                       ))}
@@ -876,7 +985,7 @@ function App() {
                       {unionActivities.map((activity, index) => (
                         <tr
                           key={index}
-                          className="border-b border-gray-700/50 hover:bg-black/30"
+                          className="border-b border-gray-700/50 hover:bg-gray-700/30"
                         >
                           <td className="py-3 px-4">
                             <span
@@ -898,7 +1007,7 @@ function App() {
                             {activity.content}
                           </td>
                           <td className="py-3 px-4 text-gray-400 text-sm">
-                            {new Date(activity.activity_date).toLocaleString()}
+                            {formatDate(activity.activity_date)}
                           </td>
                         </tr>
                       ))}
@@ -934,7 +1043,7 @@ function App() {
                       {groupedData.map((user, index) => (
                         <tr
                           key={index}
-                          className="border-b border-gray-700/50 hover:bg-black/30"
+                          className="border-b border-gray-700/50 hover:bg-gray-700/30"
                         >
                           <td className="py-3 px-4 text-white font-semibold">
                             {user.username}
@@ -943,7 +1052,7 @@ function App() {
                             {user.post_count}
                           </td>
                           <td className="py-3 px-4 text-yellow-400 font-semibold">
-                            {user.avg_engagement?.toFixed(2)}
+                            {formatNumber(user.avg_engagement)}
                           </td>
                           <td className="py-3 px-4">
                             <span
@@ -1046,18 +1155,18 @@ function App() {
                   "GROUP BY with HAVING",
                   "ORDER BY with sorting",
                   "TRIGGERS (auto-update counts)",
-                  "UNION/INTERSECT operations",
+                  "UNION ALL operations",
                   "LIKE pattern matching",
-                  "IN keyword filtering",
                   "WINDOW FUNCTIONS (RANK)",
-                  "STORED PROCEDURES",
                   "MATERIALIZED VIEWS",
                   "VIEWS for abstraction",
                   "JOIN operations",
+                  "JSONB data type",
+                  "Array data types",
                 ].map((feature, index) => (
                   <div
                     key={index}
-                    className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4 text-center"
+                    className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4 text-center hover:bg-blue-500/20 transition-colors"
                   >
                     <div className="text-blue-400 font-semibold">{feature}</div>
                   </div>
