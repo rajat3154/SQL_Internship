@@ -21,12 +21,22 @@ app = FastAPI(title="Social Media Analytics API",
               description="Advanced PostgreSQL social media analytics with triggers and views",
               version="1.0.0")
 
+origins = [
+    "http://localhost:5173",  # Local development
+    "http://localhost:3000",  # Alternative local
+    "https://social-media-analytics-liard.vercel.app",  # Your Vercel frontend
+    "https://social-media-analytics-liard.vercel.app/",  # With trailing slash
+    "https://*.vercel.app",  # All Vercel deployments
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173","https://social-media-analytics-liard.vercel.app/"],
+    allow_origins=origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    allow_credentials=True
+    expose_headers=["*"],  # Expose all headers
+    max_age=600,  # Cache preflight requests for 10 minutes
 )
 
 DATABASE_URL = os.getenv("DATABASE_URL")
