@@ -3,7 +3,7 @@ import React, { useState, useEffect } from "react";
 import axios from "axios";
 import "./App.css";
 
-const API_URL = "http://localhost:8000";
+const API_URL = "https://social-media-analytics-7nx4.onrender.com";
 
 function App() {
   const [activeTab, setActiveTab] = useState("analytics");

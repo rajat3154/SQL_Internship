@@ -1,4 +1,4 @@
-# main.py - COMPLETE FIXED VERSION FOR SUPABASE
+# main.py - COMPLETE WORKING VERSION
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -15,6 +15,7 @@ import os
 import io
 import csv
 import logging
+import time
 
 # Configure logging
 logging.basicConfig(
@@ -25,17 +26,22 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
+# Initialize FastAPI app
 app = FastAPI(
     title="Social Media Analytics API",
-    description="Production API for social media analytics",
-    version="2.0.0"
+    description="Production-ready API for social media analytics",
+    version="2.1.0",
+    docs_url="/docs" if os.getenv("ENVIRONMENT") == "development" else None,
+    redoc_url="/redoc" if os.getenv("ENVIRONMENT") == "development" else None,
 )
 
-# CORS configuration
+# ========== CORS MIDDLEWARE ==========
+# Define allowed origins
 origins = [
     "http://localhost:5173",
     "http://localhost:3000",
     "https://social-media-analytics-liard.vercel.app",
+    "https://social-media-analytics-liard.vercel.app/",
     "https://*.vercel.app",
 ]
 
@@ -43,17 +49,50 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
+    expose_headers=["*"],
+    max_age=600,
 )
 
-# ========== SUPABASE DATABASE CONFIGURATION ==========
+# ========== ADD CUSTOM MIDDLEWARE ==========
+@app.middleware("http")
+async def add_cors_headers(request, call_next):
+    """Add CORS headers to all responses"""
+    response = await call_next(request)
+    
+    # Get origin from request
+    origin = request.headers.get("origin", "")
+    
+    # Check if origin is allowed
+    allowed = False
+    for allowed_origin in origins:
+        if allowed_origin == "*" or origin == allowed_origin:
+            allowed = True
+            break
+        elif "*" in allowed_origin:
+            # Handle wildcard domains
+            domain = allowed_origin.replace("*.", "")
+            if origin.endswith(domain):
+                allowed = True
+                break
+    
+    if allowed:
+        response.headers["Access-Control-Allow-Origin"] = origin
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    
+    return response
+
+# ========== DATABASE CONFIGURATION ==========
 def get_database_url():
     """Get and format database URL for Supabase"""
-    DATABASE_URL = os.getenv("DATABASE_URL")
+    DATABASE_URL = os.getenv("DATABASE_URL", "")
     
     if not DATABASE_URL:
-        raise ValueError("DATABASE_URL environment variable is not set")
+        logger.error("DATABASE_URL environment variable is not set")
+        return ""
     
     # For Supabase, use port 6543 for connection pooling
     if "pooler.supabase.com" in DATABASE_URL:
@@ -63,12 +102,14 @@ def get_database_url():
     
     return DATABASE_URL
 
-# Initialize database engine with NullPool
 DATABASE_URL = get_database_url()
+
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL is required")
 
 engine = create_engine(
     DATABASE_URL,
-    poolclass=NullPool,  # CRITICAL: Use NullPool for Supabase
+    poolclass=NullPool,
     connect_args={
         "connect_timeout": 10,
         "keepalives": 1,
@@ -96,7 +137,7 @@ def get_db():
         db.rollback()
         raise
     finally:
-        db.close()  # IMPORTANT: Always close connection
+        db.close()
 
 # ========== PYDANTIC MODELS ==========
 class UserCreate(BaseModel):
@@ -144,19 +185,6 @@ class CommentCreate(BaseModel):
     content: str
     parent_comment_id: Optional[str] = None
 
-class CommentResponse(BaseModel):
-    comment_id: str
-    post_id: str
-    user_id: str
-    username: str
-    content: str
-    parent_comment_id: Optional[str] = None
-    like_count: int = 0
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
-
 class AnalyticsResponse(BaseModel):
     top_posts: List[Dict[str, Any]]
     user_summary: List[Dict[str, Any]]
@@ -173,18 +201,17 @@ def execute_query(db: Session, query: str, params: Dict = None):
             columns = result.keys()
             rows = result.fetchall()
             
-            # Convert each row to dict with proper type handling
             converted_rows = []
             for row in rows:
                 row_dict = {}
                 for i, col in enumerate(columns):
                     value = row[i]
-                    # Convert UUID to string
                     if isinstance(value, UUID):
                         value = str(value)
-                    # Convert Decimal to float
                     elif isinstance(value, Decimal):
                         value = float(value)
+                    elif isinstance(value, datetime):
+                        value = value.isoformat()
                     row_dict[col] = value
                 converted_rows.append(row_dict)
             return converted_rows
@@ -195,7 +222,69 @@ def execute_query(db: Session, query: str, params: Dict = None):
         logger.error(f"Query execution error: {str(e)}")
         raise HTTPException(status_code=500, detail="Database operation failed")
 
+# ========== HEALTH CHECK ==========
+@app.get("/")
+def root():
+    return {
+        "message": "Social Media Analytics API",
+        "status": "running",
+        "version": "2.1.0",
+        "timestamp": datetime.now().isoformat(),
+        "endpoints": {
+            "health": "/health",
+            "users": "/users/",
+            "posts": "/posts/",
+            "analytics": "/analytics/"
+        }
+    }
+
+@app.get("/health")
+def health_check(db: Session = Depends(get_db)):
+    """Health check with database connection"""
+    try:
+        # Quick database check
+        result = db.execute(text("SELECT 1 as status, NOW() as timestamp"))
+        db_status = result.fetchone()
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "healthy",
+                "database": "connected",
+                "timestamp": datetime.now().isoformat(),
+                "db_timestamp": db_status["timestamp"].isoformat() if db_status else None
+            }
+        )
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "unhealthy",
+                "database": "disconnected",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat()
+            }
+        )
+
 # ========== USER ENDPOINTS ==========
+@app.get("/users/", response_model=List[UserResponse])
+def get_users(db: Session = Depends(get_db)):
+    """Get all users"""
+    try:
+        query = """
+        SELECT 
+            user_id::text as user_id, 
+            username, email, full_name, 
+            created_at, profile_data, is_active
+        FROM Users 
+        ORDER BY created_at DESC
+        """
+        return execute_query(db, query)
+    except Exception as e:
+        logger.error(f"Error fetching users: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch users")
+
 @app.post("/users/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 def create_user(user: UserCreate, db: Session = Depends(get_db)):
     """Create a new user"""
@@ -223,20 +312,27 @@ def create_user(user: UserCreate, db: Session = Depends(get_db)):
         logger.error(f"Error creating user: {e}")
         raise HTTPException(status_code=500, detail="Failed to create user")
 
-@app.get("/users/", response_model=List[UserResponse])
-def get_users(db: Session = Depends(get_db)):
-    """Get all users"""
-    query = """
-    SELECT 
-        user_id::text as user_id, 
-        username, email, full_name, 
-        created_at, profile_data, is_active
-    FROM Users 
-    ORDER BY created_at DESC
-    """
-    return execute_query(db, query)
-
 # ========== POST ENDPOINTS ==========
+@app.get("/posts/", response_model=List[PostResponse])
+def get_posts(db: Session = Depends(get_db)):
+    """Get all posts with user info"""
+    try:
+        query = """
+        SELECT 
+            p.post_id::text as post_id, 
+            p.user_id::text as user_id, 
+            p.content, p.media_urls, p.like_count,
+            p.comment_count, p.engagement_score, p.created_at, p.updated_at,
+            u.username
+        FROM Posts p
+        JOIN Users u ON p.user_id = u.user_id
+        ORDER BY p.created_at DESC
+        """
+        return execute_query(db, query)
+    except Exception as e:
+        logger.error(f"Error fetching posts: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch posts")
+
 @app.post("/posts/", response_model=PostResponse, status_code=status.HTTP_201_CREATED)
 def create_post(post: PostCreate, db: Session = Depends(get_db)):
     """Create a new post"""
@@ -271,94 +367,6 @@ def create_post(post: PostCreate, db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Error creating post: {e}")
         raise HTTPException(status_code=500, detail="Failed to create post")
-
-@app.get("/posts/", response_model=List[PostResponse])
-def get_posts(db: Session = Depends(get_db)):
-    """Get all posts with user info"""
-    query = """
-    SELECT 
-        p.post_id::text as post_id, 
-        p.user_id::text as user_id, 
-        p.content, p.media_urls, p.like_count,
-        p.comment_count, p.engagement_score, p.created_at, p.updated_at,
-        u.username
-    FROM Posts p
-    JOIN Users u ON p.user_id = u.user_id
-    ORDER BY p.created_at DESC
-    """
-    return execute_query(db, query)
-
-# ========== LIKE ENDPOINTS ==========
-@app.post("/likes/", status_code=status.HTTP_201_CREATED)
-def create_like(like: LikeCreate, db: Session = Depends(get_db)):
-    """Add a like to a post"""
-    try:
-        query = """
-        INSERT INTO Likes (post_id, user_id)
-        VALUES (:post_id::uuid, :user_id::uuid)
-        ON CONFLICT (user_id, post_id) DO NOTHING
-        RETURNING created_at
-        """
-        result = execute_query(db, query, {
-            "post_id": like.post_id,
-            "user_id": like.user_id
-        })
-        
-        if result:
-            return {"message": "Like added successfully", "liked_at": result[0]["created_at"]}
-        return {"message": "Like already exists"}
-    except Exception as e:
-        logger.error(f"Error adding like: {e}")
-        raise HTTPException(status_code=500, detail="Failed to add like")
-
-# ========== COMMENT ENDPOINTS ==========
-@app.post("/comments/", response_model=CommentResponse, status_code=status.HTTP_201_CREATED)
-def create_comment(comment: CommentCreate, db: Session = Depends(get_db)):
-    """Add a comment to a post"""
-    try:
-        query = """
-        INSERT INTO Comments (post_id, user_id, content, parent_comment_id)
-        VALUES (
-            :post_id::uuid, 
-            :user_id::uuid, 
-            :content, 
-            CASE WHEN :parent_comment_id IS NOT NULL AND :parent_comment_id != '' 
-                 THEN :parent_comment_id::uuid 
-                 ELSE NULL END
-        )
-        RETURNING 
-            comment_id::text as comment_id, 
-            post_id::text as post_id, 
-            user_id::text as user_id, 
-            content, 
-            CASE WHEN parent_comment_id IS NOT NULL 
-                 THEN parent_comment_id::text 
-                 ELSE NULL END as parent_comment_id,
-            like_count, created_at, updated_at
-        """
-        
-        result = execute_query(db, query, {
-            "post_id": comment.post_id,
-            "user_id": comment.user_id,
-            "content": comment.content,
-            "parent_comment_id": comment.parent_comment_id or None
-        })
-        
-        if result:
-            # Get username
-            user_query = """
-            SELECT username 
-            FROM Users 
-            WHERE user_id = :user_id::uuid
-            """
-            user_result = execute_query(db, user_query, {"user_id": comment.user_id})
-            if user_result:
-                result[0]["username"] = user_result[0]["username"]
-            return result[0]
-        raise HTTPException(status_code=400, detail="Comment creation failed")
-    except Exception as e:
-        logger.error(f"Error creating comment: {e}")
-        raise HTTPException(status_code=500, detail="Failed to create comment")
 
 # ========== ANALYTICS ENDPOINTS ==========
 @app.get("/analytics/top-posts")
@@ -451,11 +459,16 @@ def get_engagement_stats(db: Session = Depends(get_db)):
             "top_engaged_users": []
         }
 
-@app.get("/analytics/union-activities")
-def get_union_activities(db: Session = Depends(get_db)):
-    """Get combined activities using UNION"""
+@app.get("/analytics/full-report", response_model=AnalyticsResponse)
+def get_full_report(db: Session = Depends(get_db)):
+    """Get complete analytics report"""
     try:
-        query = """
+        top_posts = get_top_posts(limit=10, db=db)
+        user_summary = get_user_summary(limit=20, db=db)
+        engagement_stats = get_engagement_stats(db=db)
+        
+        # Union activities
+        union_query = """
         SELECT 
             'POST' as activity_type, 
             u.username, 
@@ -482,16 +495,10 @@ def get_union_activities(db: Session = Depends(get_db)):
         ORDER BY activity_date DESC
         LIMIT 20
         """
-        return execute_query(db, query)
-    except Exception as e:
-        logger.error(f"Error fetching union activities: {e}")
-        return []
-
-@app.get("/analytics/group-by-engagement")
-def group_by_engagement(db: Session = Depends(get_db)):
-    """Group users by engagement level using GROUP BY and HAVING"""
-    try:
-        query = """
+        union_activities = execute_query(db, union_query)
+        
+        # Grouped engagement
+        grouped_query = """
         SELECT 
             u.username,
             COUNT(p.post_id) as post_count,
@@ -508,31 +515,17 @@ def group_by_engagement(db: Session = Depends(get_db)):
         HAVING COUNT(p.post_id) >= 0
         ORDER BY avg_engagement DESC
         """
-        return execute_query(db, query)
-    except Exception as e:
-        logger.error(f"Error fetching grouped engagement: {e}")
-        return []
-
-@app.get("/analytics/full-report", response_model=AnalyticsResponse)
-def get_full_report(db: Session = Depends(get_db)):
-    """Get complete analytics report"""
-    try:
-        top_posts = get_top_posts(limit=10, db=db)
-        user_summary = get_user_summary(limit=20, db=db)
-        engagement_stats = get_engagement_stats(db=db)
-        union_activities = get_union_activities(db=db)
-        grouped_engagement = group_by_engagement(db=db)
+        grouped_engagement = execute_query(db, grouped_query)
         
         return AnalyticsResponse(
-            top_posts=top_posts,
-            user_summary=user_summary,
-            engagement_stats=engagement_stats,
-            union_activities=union_activities,
-            grouped_engagement=grouped_engagement
+            top_posts=top_posts or [],
+            user_summary=user_summary or [],
+            engagement_stats=engagement_stats or {},
+            union_activities=union_activities or [],
+            grouped_engagement=grouped_engagement or []
         )
     except Exception as e:
         logger.error(f"Error generating full report: {e}")
-        # Return empty response instead of error
         return AnalyticsResponse(
             top_posts=[],
             user_summary=[],
@@ -541,35 +534,53 @@ def get_full_report(db: Session = Depends(get_db)):
             grouped_engagement=[]
         )
 
-# ========== HEALTH ENDPOINTS ==========
-@app.get("/")
-def root():
-    return {
-        "message": "Social Media Analytics API",
-        "status": "running",
-        "version": "2.0.0",
-        "docs": "https://social-media-analytics-7nx4.onrender.com/docs"
-    }
-
-@app.get("/health")
-def health_check(db: Session = Depends(get_db)):
-    """Health check with database connection"""
-    try:
-        db.execute(text("SELECT 1"))
-        return {
-            "status": "healthy",
-            "database": "connected",
-            "timestamp": datetime.now().isoformat(),
-            "service": "social-media-analytics-api"
+# ========== OPTIONS HANDLER FOR CORS PREFLIGHT ==========
+@app.options("/{path:path}")
+async def options_handler(path: str):
+    """Handle OPTIONS requests for CORS preflight"""
+    return JSONResponse(
+        content={},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Credentials": "true",
         }
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return {
-            "status": "unhealthy",
-            "database": "disconnected",
-            "error": str(e),
-            "timestamp": datetime.now().isoformat()
-        }, 503
+    )
+
+# ========== ERROR HANDLERS ==========
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request, exc):
+    """Handle HTTP exceptions"""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": True,
+            "message": exc.detail,
+            "status_code": exc.status_code
+        },
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Credentials": "true",
+        }
+    )
+
+@app.exception_handler(Exception)
+async def general_exception_handler(request, exc):
+    """Handle all other exceptions"""
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": True,
+            "message": "Internal server error",
+            "status_code": 500
+        },
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Credentials": "true",
+        }
+    )
 
 if __name__ == "__main__":
     import uvicorn
