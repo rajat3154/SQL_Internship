@@ -64,14 +64,7 @@ def get_db():
     finally:
         db.close()
 
-@app.on_event("startup")
-def startup_event():
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-            print("✅ Database Connected Successfully")
-    except Exception as e:
-        print(f"❌ Database connection failed: {e}")
+
 from pydantic import BaseModel, Field, ConfigDict
 from datetime import datetime
 from typing import List, Optional, Dict, Any
@@ -586,4 +579,4 @@ def health_check(db: Session = Depends(get_db)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
